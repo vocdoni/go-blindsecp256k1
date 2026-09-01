@@ -65,6 +65,8 @@ func FuzzPointUnmarshalJSON(f *testing.F) {
 	f.Add(jb)
 	f.Add([]byte(`{"x":"3","y":"3"}`))
 	f.Add([]byte(`{"x":"-1","y":"foo"}`))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`{"x":null,"y":null}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var p Point

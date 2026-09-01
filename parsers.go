@@ -34,10 +34,12 @@ func (p Point) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements the json unmarshaler for the Point. The decoded
 // point is validated to be on the secp256k1 curve.
 func (p *Point) UnmarshalJSON(b []byte) error {
-	aux := &struct {
+	// decode into an allocated struct (not a pointer) so JSON null cannot
+	// leave it nil: it falls through to the SetString parse errors below
+	var aux struct {
 		X string `json:"x"`
 		Y string `json:"y"`
-	}{}
+	}
 	err := json.Unmarshal(b, &aux)
 	if err != nil {
 		return err
@@ -91,6 +93,10 @@ func (pk *PublicKey) UnmarshalJSON(b []byte) error {
 	err := json.Unmarshal(b, &point)
 	if err != nil {
 		return err
+	}
+	if point == nil {
+		// JSON null bypasses Point.UnmarshalJSON and leaves the pointer nil
+		return fmt.Errorf("can not parse PublicKey: null")
 	}
 	pk.X = point.X
 	pk.Y = point.Y
@@ -154,13 +160,15 @@ func (sig Signature) MarshalJSON() ([]byte, error) {
 // decoded S is validated to be in [1, N) and the decoded F to be on the
 // secp256k1 curve.
 func (sig *Signature) UnmarshalJSON(b []byte) error {
-	aux := &struct {
+	// decode into an allocated struct (not a pointer) so JSON null cannot
+	// leave it nil: it falls through to the SetString parse errors below
+	var aux struct {
 		S string `json:"s"`
 		F struct {
 			X string `json:"x"`
 			Y string `json:"y"`
 		} `json:"f"`
-	}{}
+	}
 	err := json.Unmarshal(b, &aux)
 	if err != nil {
 		return err

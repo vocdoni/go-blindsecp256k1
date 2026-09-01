@@ -352,6 +352,14 @@ func TestJSONValidation(t *testing.T) {
 	assert.NotNil(t, json.Unmarshal(
 		[]byte(`{"x":"`+beyondX.String()+`","y":"`+G.Y.String()+`"}`), &p))
 
+	// JSON null must return an error, never panic, for all three types
+	assert.NotNil(t, json.Unmarshal([]byte(`null`), &p))
+	var pkNull PublicKey
+	assert.NotNil(t, json.Unmarshal([]byte(`null`), &pkNull))
+	var sigNull Signature
+	assert.NotNil(t, json.Unmarshal([]byte(`null`), &sigNull))
+	assert.NotNil(t, json.Unmarshal([]byte(`{"s":"1","f":null}`), &sigNull))
+
 	var sig Signature
 	// S = 0 and S >= N
 	fJSON := `{"x":"` + G.X.String() + `","y":"` + G.Y.String() + `"}`
