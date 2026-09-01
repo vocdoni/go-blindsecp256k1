@@ -6,7 +6,6 @@ import (
 	"syscall/js"
 
 	"github.com/arnaucube/go-blindsecp256k1"
-
 	blindsecp256k1v0 "github.com/arnaucube/go-blindsecp256k1/v0"
 )
 

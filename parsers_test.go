@@ -116,7 +116,7 @@ func TestImportECDSApubKey(t *testing.T) {
 	pk, err := NewPublicKeyFromECDSA(crypto.FromECDSAPub(&k.PublicKey))
 	assert.Nil(t, err)
 	// Set the ECDSA Private key point as a blindsecp256k1 PrivateKey type
-	bk := PrivateKey(*k.D)
+	bk := PrivateKey(*k.D) //nolint:staticcheck // test reads legacy ecdsa D on purpose
 	// Compare both public keys
 	assert.Equal(t, bk.Public().Bytes(), pk.Bytes())
 }

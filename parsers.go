@@ -40,11 +40,11 @@ func (p *Point) UnmarshalJSON(b []byte) error {
 	}
 	x, ok := new(big.Int).SetString(aux.X, 10)
 	if !ok {
-		return fmt.Errorf("Can not parse Point.X %s", aux.X)
+		return fmt.Errorf("can not parse Point.X %s", aux.X)
 	}
 	y, ok := new(big.Int).SetString(aux.Y, 10)
 	if !ok {
-		return fmt.Errorf("Can not parse Point.Y %s", aux.Y)
+		return fmt.Errorf("can not parse Point.Y %s", aux.Y)
 	}
 	p.X = x
 	p.Y = y
@@ -61,8 +61,8 @@ func (p *Point) Bytes() []byte {
 // 64 which has encoded the point coordinates each one as 32 bytes in
 // little-endian.
 func NewPointFromBytes(b []byte) (*Point, error) {
-	if len(b) != 33 { //nolint:gomnd
-		return nil, fmt.Errorf("Can not parse bytes to Point,"+
+	if len(b) != 33 {
+		return nil, fmt.Errorf("can not parse bytes to Point,"+
 			" expected byte array of length %d, current %d",
 			33, len(b))
 	}
@@ -114,8 +114,8 @@ func NewPublicKeyFromECDSA(b []byte) (*PublicKey, error) {
 		return nil, err
 	}
 	pk := new(PublicKey)
-	pk.X = pub.X
-	pk.Y = pub.Y
+	pk.X = pub.X //nolint:staticcheck // reading legacy ecdsa coordinates is intentional here
+	pk.Y = pub.Y //nolint:staticcheck // reading legacy ecdsa coordinates is intentional here
 	return pk, nil
 }
 
@@ -155,17 +155,17 @@ func (sig *Signature) UnmarshalJSON(b []byte) error {
 
 	s, ok := new(big.Int).SetString(aux.S, 10)
 	if !ok {
-		return fmt.Errorf("Can not parse sig.S %s", aux.S)
+		return fmt.Errorf("can not parse sig.S %s", aux.S)
 	}
 	sig.S = s
 
 	x, ok := new(big.Int).SetString(aux.F.X, 10)
 	if !ok {
-		return fmt.Errorf("Can not parse sig.F.X %s", aux.F.X)
+		return fmt.Errorf("can not parse sig.F.X %s", aux.F.X)
 	}
 	y, ok := new(big.Int).SetString(aux.F.Y, 10)
 	if !ok {
-		return fmt.Errorf("Can not parse sig.F.Y %s", aux.F.Y)
+		return fmt.Errorf("can not parse sig.F.Y %s", aux.F.Y)
 	}
 	sig.F = &Point{}
 	sig.F.X = x
@@ -183,9 +183,9 @@ func (sig *Signature) Bytes() []byte {
 // length 96 which has encoded S and the F point coordinates each one as 32
 // bytes in little-endian.
 func NewSignatureFromBytes(b []byte) (*Signature, error) {
-	if len(b) != 65 { //nolint:gomnd
+	if len(b) != 65 {
 		return nil,
-			fmt.Errorf("Can not parse bytes to Signature,"+
+			fmt.Errorf("can not parse bytes to Signature,"+
 				" expected byte array of length %d, current %d",
 				65, len(b))
 	}

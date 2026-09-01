@@ -4,7 +4,6 @@
 // https://sci-hub.st/10.1109/ICCKE.2013.6682844
 //
 // LICENSE can be found at https://github.com/arnaucube/go-blindsecp256k1/blob/master/LICENSE
-//
 package blindsecp256k1
 
 // WARNING: WIP code
@@ -31,7 +30,7 @@ var (
 	P *big.Int = s256.P
 
 	// G represents the base point of secp256k1
-	G *Point = &Point{
+	G = &Point{
 		X: s256.Gx,
 		Y: s256.Gy,
 	}
@@ -144,7 +143,7 @@ func newRand() (*big.Int, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pk.D, nil
+	return pk.D, nil //nolint:staticcheck // D as random scalar source is intentional legacy behavior
 }
 
 // PrivateKey represents the signer's private key
@@ -196,7 +195,7 @@ func NewRequestParameters() (*big.Int, *Point, error) {
 func checkBigIntSize(b *big.Int) error {
 	// check b.Bytes()==32, as go returns big-endian representation of the
 	// bigint, so if length is not 32 we have a smaller value than expected
-	if len(b.Bytes()) != 32 { //nolint:gomnd
+	if len(b.Bytes()) != 32 {
 		return fmt.Errorf("invalid length, need 32 bytes")
 	}
 	return nil

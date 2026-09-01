@@ -19,8 +19,8 @@ func (p *Point) BytesUncompressed() []byte {
 // with length 64 which has encoded the point coordinates each one as 32 bytes
 // in little-endian.
 func NewPointFromBytesUncompressed(b []byte) (*Point, error) {
-	if len(b) != 64 { //nolint:gomnd
-		return nil, fmt.Errorf("Can not parse bytes to Point,"+
+	if len(b) != 64 {
+		return nil, fmt.Errorf("can not parse bytes to Point,"+
 			" expected byte array of length %d, current %d",
 			64, len(b))
 	}
@@ -63,9 +63,9 @@ func (sig *Signature) BytesUncompressed() []byte {
 // length 96 which has encoded S and the F point coordinates each one as 32
 // bytes in little-endian.
 func NewSignatureFromBytesUncompressed(b []byte) (*Signature, error) {
-	if len(b) != 96 { //nolint:gomnd
+	if len(b) != 96 {
 		return nil,
-			fmt.Errorf("Can not parse bytes to Signature,"+
+			fmt.Errorf("can not parse bytes to Signature,"+
 				" expected byte array of length %d, current %d",
 				96, len(b))
 	}

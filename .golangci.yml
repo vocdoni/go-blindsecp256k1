@@ -1,17 +1,26 @@
+version: "2"
+
 issues:
-        max-same-issues: 0
-        exclude-use-default: false
+  max-same-issues: 0
+
 linters:
-        enable:
-        - whitespace
-        - gosec
-        - gci
-        - misspell
-        - gomnd
-        - gofmt
-        - goimports
-        - lll
-        - golint
-linters-settings:
-        lll:
-                line-length: 100
+  enable:
+    - whitespace
+    - gosec
+    - misspell
+    - mnd
+    - lll
+    - revive
+  settings:
+    lll:
+      line-length: 100
+    mnd:
+      # decimal string base and the fixed byte lengths of the wire encodings
+      # (32-byte scalars, 33/64-byte points, 65/96-byte signatures)
+      ignored-numbers: ["10", "32", "33", "64", "65", "96"]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - gci
