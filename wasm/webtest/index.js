@@ -15,24 +15,8 @@ function test() {
 	let unblindRes = wasmUnblind(sBlind, blindRes.uA, blindRes.uB, blindRes.uFx, blindRes.uFy);
 	console.log("unblind", unblindRes);
 
-
 	// wasmVerify method not used here because the hardcoded values would
 	// not match with the random generated values from the 'blind' method
 	// let verified = wasmVerify(m, unblindRes.s, unblindRes.fx, unblindRes.fy, signerQx, signerQy);
-	// console.log("verify", verified);
-
-	// ---
-	// v0
-	console.log("using: http://www.isecure-journal.com/article_39171_47f9ec605dd3918c2793565ec21fcd7a.pdf");
-	// Q & R would be received from the Signer
-	blindRes = wasmBlindv0(m, signerQx, signerQy, signerRx, signerRy);
-	console.log("blindv0", blindRes);
-	// sBlind would be received from the Signer
-	unblindRes = wasmUnblindv0(sBlind, blindRes.uB, blindRes.uC, blindRes.uFx, blindRes.uFy);
-	console.log("unblindv0", unblindRes);
-
-	// wasmVerifyv0 method not used here because the hardcoded values would
-	// not match with the random generated values from the 'blind' method
-	// let verified = wasmVerifyv0(m, unblindRes.s, unblindRes.fx, unblindRes.fy, signerQx, signerQy);
 	// console.log("verify", verified);
 }
