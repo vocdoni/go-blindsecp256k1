@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +22,7 @@ func TestFlow(t *testing.T) {
 
 	// user: blinds the msg using signer's R
 	// msg := new(big.Int).SetBytes([]byte("test"))
-	msg := new(big.Int).SetBytes(crypto.Keccak256([]byte("test")))
+	msg := new(big.Int).SetBytes(keccak256([]byte("test")))
 	msgBlinded, userSecretData, err := Blind(msg, signerR)
 	require.Nil(t, err)
 
@@ -64,13 +63,13 @@ func TestHashMOddBytes(t *testing.T) {
 	require.True(t, ok)
 	mBytes := m.Bytes()
 
-	hBytes := crypto.Keccak256(mBytes[3:])
+	hBytes := keccak256(mBytes[3:])
 	h := new(big.Int).SetBytes(hBytes)
 	assert.Equal(t,
 		"57523339312508913023232057765773019244858443678197951618720342803494056599369",
 		h.String())
 
-	hBytes = crypto.Keccak256(append(mBytes, []byte{0x12, 0x34}...))
+	hBytes = keccak256(append(mBytes, []byte{0x12, 0x34}...))
 	h = new(big.Int).SetBytes(hBytes)
 	assert.Equal(t,
 		"9697834584560956691445940439424778243200861871421750951058436814122640359156",
