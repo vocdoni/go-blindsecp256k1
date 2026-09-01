@@ -196,10 +196,14 @@ func TestUnblindInvalidInputs(t *testing.T) {
 	assert.NotNil(t, err)
 	_, err = Unblind(nil, valid)
 	assert.NotNil(t, err)
-	_, err = Unblind(big.NewInt(0), valid)
+	_, err = Unblind(new(big.Int).Neg(big.NewInt(1)), valid)
 	assert.NotNil(t, err)
 	_, err = Unblind(N, valid)
 	assert.NotNil(t, err)
+	// sBlind = 0 is a legitimate signer output (s' = d·m'+k mod N can wrap
+	// to zero) and must be accepted
+	_, err = Unblind(big.NewInt(0), valid)
+	assert.Nil(t, err)
 	_, err = Unblind(big.NewInt(1), &UserSecretData{A: nil, B: big.NewInt(1), F: G})
 	assert.NotNil(t, err)
 	_, err = Unblind(big.NewInt(1), &UserSecretData{
@@ -211,6 +215,55 @@ func TestUnblindInvalidInputs(t *testing.T) {
 	// sanity: valid inputs still work
 	_, err = Unblind(sig.S, valid)
 	assert.Nil(t, err)
+}
+
+// TestUnblindZeroSBlind exercises the constructible edge case where the
+// signer legitimately outputs sBlind = 0: d=1, mBlinded=1, k=N-1 gives
+// s' = 1·1 + (N-1) = 0 (mod N).
+func TestUnblindZeroSBlind(t *testing.T) {
+	one := big.NewInt(1)
+	sk := PrivateKey(*one)
+	kSecret := new(big.Int).Sub(N, big.NewInt(1))
+
+	sBlind, err := sk.BlindSign(one, kSecret)
+	require.Nil(t, err)
+	require.Equal(t, 0, sBlind.Sign())
+
+	u := &UserSecretData{A: big.NewInt(2), B: big.NewInt(3), F: G.Mul(big.NewInt(5))}
+	sig, err := Unblind(sBlind, u)
+	require.Nil(t, err)
+	// s = a·0 + b = b
+	require.Equal(t, u.B, sig.S)
+}
+
+// TestPointInfinity checks that the affine (0, 0) infinity representation
+// behaves as the group identity through every Point operation, including
+// scalar multiplication (it maps to the canonical Z=0 Jacobian infinity).
+func TestPointInfinity(t *testing.T) {
+	// compare by value: big.Int deep-equality is representation-sensitive
+	// (zero can be a nil or an empty abs slice)
+	samePoint := func(t *testing.T, want, got *Point) {
+		t.Helper()
+		require.Zero(t, want.X.Cmp(got.X))
+		require.Zero(t, want.Y.Cmp(got.Y))
+	}
+	infinity := &Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	p := G.Mul(big.NewInt(7))
+
+	// N·G = infinity, and adding G to it must give back G
+	nG := G.Mul(N)
+	samePoint(t, infinity, nG)
+	samePoint(t, G, nG.Add(G))
+
+	// identity on both sides of Add
+	samePoint(t, p, infinity.Add(p))
+	samePoint(t, p, p.Add(infinity))
+
+	// scalar multiples of infinity stay at infinity
+	samePoint(t, infinity, infinity.Mul(big.NewInt(5)))
+
+	// 0·P = infinity
+	samePoint(t, infinity, p.Mul(big.NewInt(0)))
 }
 
 func TestDecompressPointInvalid(t *testing.T) {
@@ -269,6 +322,18 @@ func TestUncompressedValidation(t *testing.T) {
 	fB := G.Compress()
 	copy(zeroSig[32:], fB[:])
 	_, err = DecompressSignature(zeroSig)
+	assert.NotNil(t, err)
+	// ... also through the slice-based parser
+	_, err = NewSignatureFromBytes(zeroSig[:])
+	assert.NotNil(t, err)
+
+	// compressed signature with S >= N must be rejected (S is stored
+	// little-endian, so fill with 0xff to exceed N)
+	bigSig := zeroSig
+	for i := 0; i < 32; i++ {
+		bigSig[i] = 0xff
+	}
+	_, err = NewSignatureFromBytes(bigSig[:])
 	assert.NotNil(t, err)
 }
 

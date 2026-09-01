@@ -59,13 +59,17 @@ type Point struct {
 }
 
 // toJacobian converts p to a Jacobian point (Z=1), reducing the coordinates
-// mod P. The affine point (0, 0) keeps representing the point at infinity,
-// which is the convention the dcrd group operations use as well.
+// mod P. The affine point (0, 0), which this package uses to represent the
+// point at infinity, maps to the canonical Jacobian infinity (Z=0) so that
+// every dcrd group operation (including scalar multiplication) treats it as
+// the identity.
 func (p *Point) toJacobian(result *secp256k1.JacobianPoint) {
 	var x, y, z secp256k1.FieldVal
 	x.SetByteSlice(new(big.Int).Mod(p.X, P).Bytes())
 	y.SetByteSlice(new(big.Int).Mod(p.Y, P).Bytes())
-	z.SetInt(1)
+	if !x.IsZero() || !y.IsZero() {
+		z.SetInt(1)
+	}
 	*result = secp256k1.MakeJacobianPoint(&x, &y, &z)
 }
 
@@ -374,8 +378,13 @@ func DecompressSignature(b [65]byte) (*Signature, error) {
 // Unblind performs the unblinding operation of the blinded signature for the
 // given UserSecretData
 func Unblind(sBlind *big.Int, u *UserSecretData) (*Signature, error) {
-	if err := validateScalar(sBlind); err != nil {
-		return nil, fmt.Errorf("sBlind error: %s", err)
+	// sBlind = d·m' + k mod N can legitimately be zero, so unlike other
+	// scalars it is accepted in the range [0, N)
+	if sBlind == nil {
+		return nil, fmt.Errorf("sBlind error: nil value")
+	}
+	if sBlind.Sign() < 0 || sBlind.Cmp(N) >= 0 {
+		return nil, fmt.Errorf("sBlind error: value must be in [0, N)")
 	}
 	if u == nil {
 		return nil, fmt.Errorf("user secret data can not be nil")
@@ -396,6 +405,12 @@ func Unblind(sBlind *big.Int, u *UserSecretData) (*Signature, error) {
 	bS := scalarFromBigInt(u.B)
 	sB := scalarFromBigInt(sBlind)
 	s := new(secp256k1.ModNScalar).Mul2(a, sB).Add(bS)
+
+	if s.IsZero() {
+		// Verify and the parsers reject S = 0, so surface the degenerate
+		// case here instead of returning an unusable signature
+		return nil, fmt.Errorf("degenerate signature (s = 0), run the protocol again")
+	}
 
 	return &Signature{
 		S: scalarToBigInt(s),

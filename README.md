@@ -16,32 +16,53 @@ maintained by [Vocdoni](https://github.com/vocdoni), hardened for production use
 
 ```go
 import (
+	"fmt"
 	"math/big"
 
 	blindsecp256k1 "github.com/vocdoni/go-blindsecp256k1"
 )
 
-// signer: create new signer key pair
-sk, err := blindsecp256k1.NewPrivateKey()
-signerPubK := sk.Public()
+func example() error {
+	// signer: create new signer key pair
+	sk, err := blindsecp256k1.NewPrivateKey()
+	if err != nil {
+		return err
+	}
+	signerPubK := sk.Public()
 
-// signer: when user requests a new R parameter to blind a new msg,
-// create a new one-time secret k with its public R. NEVER reuse k.
-k, signerR, err := blindsecp256k1.NewRequestParameters()
+	// signer: when user requests a new R parameter to blind a new msg,
+	// create a new one-time secret k with its public R. NEVER reuse k.
+	k, signerR, err := blindsecp256k1.NewRequestParameters()
+	if err != nil {
+		return err
+	}
 
-// user: blind the msg using signer's R
-msg := new(big.Int).SetBytes([]byte("test"))
-msgBlinded, userSecretData, err := blindsecp256k1.Blind(msg, signerR)
+	// user: blind the msg using signer's R
+	msg := new(big.Int).SetBytes([]byte("test"))
+	msgBlinded, userSecretData, err := blindsecp256k1.Blind(msg, signerR)
+	if err != nil {
+		return err
+	}
 
-// signer: sign the blinded message using the private key & secret k,
-// then discard k
-sBlind, err := sk.BlindSign(msgBlinded, k)
+	// signer: sign the blinded message using the private key & secret k,
+	// then discard k
+	sBlind, err := sk.BlindSign(msgBlinded, k)
+	if err != nil {
+		return err
+	}
 
-// user: unblind the blinded signature
-sig, err := blindsecp256k1.Unblind(sBlind, userSecretData)
+	// user: unblind the blinded signature
+	sig, err := blindsecp256k1.Unblind(sBlind, userSecretData)
+	if err != nil {
+		return err
+	}
 
-// anyone: verify the signature with the signer's public key
-verified := blindsecp256k1.Verify(msg, sig, signerPubK)
+	// anyone: verify the signature with the signer's public key
+	if !blindsecp256k1.Verify(msg, sig, signerPubK) {
+		return fmt.Errorf("invalid signature")
+	}
+	return nil
+}
 ```
 
 ## Wire formats
@@ -66,15 +87,16 @@ with canonical coordinates, and signature scalars must be in `[1, N)`.
   private key. Generate a fresh `(k, R)` pair per request and discard `k` after `BlindSign`.
 - **Bound concurrent signing sessions.** Blind signature schemes of this family are subject to
   ROS/Wagner-style attacks when many sessions are open in parallel against the same key.
-- **Timing model.** Secret-scalar arithmetic is constant-time (dcrd `ModNScalar`); point
-  multiplications and the blinding inversion are variable-time. See the
+- **Timing model.** The scalar arithmetic on secrets is constant-time (dcrd `ModNScalar`),
+  but the package is not fully constant-time: the big.Int-based API boundary, point
+  multiplications, and the blinding inversion are variable-time. See the
   [package documentation](https://pkg.go.dev/github.com/vocdoni/go-blindsecp256k1) for the
   full model and the equation↔code mapping.
 
 ## Development
 
 ```sh
-go test ./...                       # test suite (root package)
+go test .                           # test suite (root package holds all tests)
 go test -run=NONE -bench=. .        # benchmarks
 go test -run=NONE -fuzz=FuzzDecompressPoint .   # fuzzers (one target at a time)
 golangci-lint run -c .golangci.yml .

@@ -34,14 +34,18 @@
 //     one additional signature. Deployments should bound the number of
 //     concurrently open sessions per key (issue R only when the request is
 //     going to be answered promptly) and rotate keys where possible.
-//   - Timing model: scalar arithmetic involving secrets (d, k, a, b) uses
-//     dcrd's constant-time ModNScalar operations, so the Signer hot path
-//     (BlindSign) is constant-time. Point multiplications and the modular
-//     inversion inside Blind use variable-time algorithms (dcrd exposes only
-//     variable-time point operations); User-side blinding secrets are
-//     one-time values per session, which limits the value of what a timing
-//     side channel could collect, but co-located attackers are not part of
-//     the threat model this package defends against.
+//   - Timing model: the scalar arithmetic on secrets (d, k, a, b) — the
+//     multiplications and additions in BlindSign, Blind and Unblind — uses
+//     dcrd's constant-time ModNScalar operations. The package is NOT fully
+//     constant-time, though: the public API is big.Int-based, so input
+//     validation and the big.Int↔scalar boundary conversions run
+//     variable-time math/big code, point multiplications are variable-time
+//     (dcrd exposes only NonConst point operations), and so is the modular
+//     inversion inside Blind. A fully constant-time signer would require a
+//     scalar-typed key API. User-side blinding secrets are one-time values
+//     per session, which limits what a timing side channel could collect,
+//     but co-located attackers are not part of the threat model this
+//     package defends against.
 //   - Verify rejects non-canonical signatures (S outside [1, N)), ruling out
 //     the trivial S+kN malleability. All parsers validate that decoded
 //     points lie on the curve and that decoded scalars are canonical.

@@ -207,13 +207,7 @@ func NewSignatureFromBytes(b []byte) (*Signature, error) {
 				" expected byte array of length %d, current %d",
 				65, len(b))
 	}
-	s := new(big.Int).SetBytes(swapEndianness(b[:32]))
-	f, err := NewPointFromBytes(b[32:65])
-	if err != nil {
-		return nil, err
-	}
-	return &Signature{
-		S: s,
-		F: f,
-	}, nil
+	var sigBytes [65]byte
+	copy(sigBytes[:], b)
+	return DecompressSignature(sigBytes)
 }
