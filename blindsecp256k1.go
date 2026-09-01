@@ -1,9 +1,3 @@
-// Package blindsecp256k1 implements the Blind signature scheme explained at
-// "New Blind Signature Schemes Based on the (Elliptic Curve) Discrete
-// Logarithm Problem", by Hamid Mala & Nafiseh Nezhadansari
-// https://sci-hub.st/10.1109/ICCKE.2013.6682844
-//
-// LICENSE can be found at https://github.com/vocdoni/go-blindsecp256k1/blob/master/LICENSE
 package blindsecp256k1
 
 import (

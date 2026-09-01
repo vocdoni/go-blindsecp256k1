@@ -1,5 +1,5 @@
 # blindsecp256k1 wasm clientlib
-[blindsecp256k1](https://github.com/arnaucube/go-blindsecp256k1) lib for browsers using go WASM.
+[blindsecp256k1](https://github.com/vocdoni/go-blindsecp256k1) lib for browsers using go WASM.
 
 ## Wasm usage
 To compile to wasm, inside the `wasm` directory, execute:
@@ -9,7 +9,7 @@ To compile to wasm, inside the `wasm` directory, execute:
 
 Add the file `wasm_exec.js` in the `webtest` directory:
 ```
-cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" .
+cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .
 ```
 
 To see the usage from javascript, check `index.js` file.
