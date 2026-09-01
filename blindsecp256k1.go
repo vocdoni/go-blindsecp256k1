@@ -1,44 +1,56 @@
-// Package blindsecp256k1 implements the Blind signature scheme explained at
-// "New Blind Signature Schemes Based on the (Elliptic Curve) Discrete
-// Logarithm Problem", by Hamid Mala & Nafiseh Nezhadansari
-// https://sci-hub.st/10.1109/ICCKE.2013.6682844
-//
-// LICENSE can be found at https://github.com/arnaucube/go-blindsecp256k1/blob/master/LICENSE
-//
 package blindsecp256k1
-
-// WARNING: WIP code
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/rand"
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"golang.org/x/crypto/sha3"
 )
 
 var (
-	s256 *secp256k1.BitCurve = secp256k1.S256()
-	zero *big.Int            = big.NewInt(0)
+	zero = big.NewInt(0)
 
 	// B (from y^2 = x^3 + B)
-	B *big.Int = s256.B
+	B = big.NewInt(7) //nolint:mnd // the secp256k1 curve constant b=7
 
 	// P represents the secp256k1 finite field
-	P *big.Int = s256.P
+	P = secp256k1.Params().P
 
 	// G represents the base point of secp256k1
-	G *Point = &Point{
-		X: s256.Gx,
-		Y: s256.Gy,
+	G = &Point{
+		X: secp256k1.Params().Gx,
+		Y: secp256k1.Params().Gy,
 	}
 
 	// N represents the order of G of secp256k1
-	N *big.Int = s256.N
+	N = secp256k1.Params().N
 )
+
+// keccak256 returns the legacy Keccak-256 hash (as used by Ethereum) of b.
+func keccak256(b []byte) []byte {
+	h := sha3.NewLegacyKeccak256()
+	h.Write(b)
+	return h.Sum(nil)
+}
+
+// scalarFromBigInt converts v into a constant-time ModNScalar, reducing it
+// modulo N (matching big.Int mod-N arithmetic for any input, negatives
+// included).
+func scalarFromBigInt(v *big.Int) *secp256k1.ModNScalar {
+	var buf [32]byte
+	new(big.Int).Mod(v, N).FillBytes(buf[:])
+	s := new(secp256k1.ModNScalar)
+	s.SetBytes(&buf)
+	return s
+}
+
+// scalarToBigInt converts a ModNScalar back to a *big.Int.
+func scalarToBigInt(s *secp256k1.ModNScalar) *big.Int {
+	b := s.Bytes()
+	return new(big.Int).SetBytes(b[:])
+}
 
 // Point represents a point on the secp256k1 curve
 type Point struct {
@@ -46,39 +58,86 @@ type Point struct {
 	Y *big.Int
 }
 
-// Add performs the Point addition
-func (p *Point) Add(q *Point) *Point {
-	x, y := s256.Add(p.X, p.Y, q.X, q.Y)
+// toJacobian converts p to a Jacobian point (Z=1), reducing the coordinates
+// mod P. The affine point (0, 0), which this package uses to represent the
+// point at infinity, maps to the canonical Jacobian infinity (Z=0) so that
+// every dcrd group operation (including scalar multiplication) treats it as
+// the identity.
+func (p *Point) toJacobian(result *secp256k1.JacobianPoint) {
+	var x, y, z secp256k1.FieldVal
+	x.SetByteSlice(new(big.Int).Mod(p.X, P).Bytes())
+	y.SetByteSlice(new(big.Int).Mod(p.Y, P).Bytes())
+	if !x.IsZero() || !y.IsZero() {
+		z.SetInt(1)
+	}
+	*result = secp256k1.MakeJacobianPoint(&x, &y, &z)
+}
+
+// jacobianToPoint converts j back to an affine Point. The point at infinity
+// maps to (0, 0).
+func jacobianToPoint(j *secp256k1.JacobianPoint) *Point {
+	j.ToAffine()
 	return &Point{
-		X: x,
-		Y: y,
+		X: new(big.Int).SetBytes(j.X.Bytes()[:]),
+		Y: new(big.Int).SetBytes(j.Y.Bytes()[:]),
 	}
 }
 
-// Mul performs the Point scalar multiplication
+// Add performs the Point addition
+func (p *Point) Add(q *Point) *Point {
+	var jp, jq, jr secp256k1.JacobianPoint
+	p.toJacobian(&jp)
+	q.toJacobian(&jq)
+	secp256k1.AddNonConst(&jp, &jq, &jr)
+	return jacobianToPoint(&jr)
+}
+
+// Mul performs the Point scalar multiplication. The scalar is interpreted
+// mod N.
 func (p *Point) Mul(scalar *big.Int) *Point {
-	x, y := s256.ScalarMult(p.X, p.Y, scalar.Bytes())
-	return &Point{
-		X: x,
-		Y: y,
+	k := scalarFromBigInt(scalar)
+	var jr secp256k1.JacobianPoint
+	if p.X.Cmp(G.X) == 0 && p.Y.Cmp(G.Y) == 0 {
+		// base-point multiplication uses the precomputed table
+		secp256k1.ScalarBaseMultNonConst(k, &jr)
+	} else {
+		var jp secp256k1.JacobianPoint
+		p.toJacobian(&jp)
+		secp256k1.ScalarMultNonConst(k, &jp, &jr)
 	}
+	return jacobianToPoint(&jr)
+}
+
+// isOnCurve reports whether p satisfies y^2 = x^3 + B with both coordinates
+// in [0, P).
+func (p *Point) isOnCurve() bool {
+	if p.X.Sign() < 0 || p.Y.Sign() < 0 || p.X.Cmp(P) >= 0 || p.Y.Cmp(P) >= 0 {
+		return false
+	}
+	y2 := new(big.Int).Mod(new(big.Int).Mul(p.Y, p.Y), P)
+	x3 := new(big.Int).Mul(new(big.Int).Mul(p.X, p.X), p.X)
+	x3b := new(big.Int).Mod(x3.Add(x3, B), P)
+	return y2.Cmp(x3b) == 0
 }
 
 func (p *Point) isValid() error {
-	if !s256.IsOnCurve(p.X, p.Y) {
-		return fmt.Errorf("Point is not on secp256k1")
+	if p == nil || p.X == nil || p.Y == nil {
+		return fmt.Errorf("point is nil")
+	}
+	if !p.isOnCurve() {
+		return fmt.Errorf("point is not on secp256k1")
 	}
 
 	if bytes.Equal(p.X.Bytes(), zero.Bytes()) &&
 		bytes.Equal(p.Y.Bytes(), zero.Bytes()) {
-		return fmt.Errorf("Point (%s, %s) can not be (0, 0)",
+		return fmt.Errorf("point (%s, %s) can not be (0, 0)",
 			p.X.String(), p.Y.String())
 	}
 	return nil
 }
 
-// Compress packs a Point to a byte array of 33 bytes, encoded in
-// little-endian.
+// Compress packs a Point to a byte array of 33 bytes: the X coordinate as
+// 32 big-endian bytes followed by a parity byte (1 if Y is odd, 0 if even).
 func (p *Point) Compress() [33]byte {
 	xBytes := p.X.Bytes()
 	odd := byte(0)
@@ -95,56 +154,32 @@ func isOdd(b *big.Int) bool {
 	return b.Bit(0) != 0
 }
 
-// DecompressPoint unpacks a Point from the given byte array of 33 bytes
-// https://bitcointalk.org/index.php?topic=162805.msg1712294#msg1712294
+// DecompressPoint unpacks a Point from the given byte array of 33 bytes:
+// 32 big-endian bytes for the X coordinate followed by a parity byte.
 func DecompressPoint(b [33]byte) (*Point, error) {
-	x := new(big.Int).SetBytes(b[:32])
-	var odd bool
-	if b[32] == byte(1) {
-		odd = true
+	if b[32] > 1 {
+		return nil, fmt.Errorf("invalid parity byte %d, expected 0 or 1", b[32])
+	}
+	odd := b[32] == 1
+
+	var x secp256k1.FieldVal
+	if overflow := x.SetByteSlice(b[:32]); overflow {
+		return nil, fmt.Errorf("x coordinate >= field prime P")
 	}
 
-	// secp256k1: y2 = x3+ ax2 + b (where A==0, B==7)
-
-	// compute x^3 + B mod p
-	x3 := new(big.Int).Mul(x, x)
-	x3 = new(big.Int).Mul(x3, x)
-	// x3 := new(big.Int).Exp(x, big.NewInt(3), nil)
-	x3 = new(big.Int).Add(x3, B)
-	x3 = new(big.Int).Mod(x3, P)
-
-	// sqrt mod p of x^3 + B
-	y := new(big.Int).ModSqrt(x3, P)
-	if y == nil {
-		return nil, fmt.Errorf("not sqrt mod of x^3")
+	// y = sqrt(x^3 + B) with the requested parity; fails if x is not the
+	// abscissa of a curve point
+	var y secp256k1.FieldVal
+	if !secp256k1.DecompressY(&x, odd, &y) {
+		return nil, fmt.Errorf("invalid point: x is not on the curve")
 	}
-	if odd != isOdd(y) {
-		y = new(big.Int).Sub(P, y)
-		// TODO if needed Mod
-	}
+	y.Normalize()
 
-	// check that y is a square root of x^3 + B
-	y2 := new(big.Int).Mul(y, y)
-	y2 = new(big.Int).Mod(y2, P)
-	if !bytes.Equal(y2.Bytes(), x3.Bytes()) {
-		return nil, fmt.Errorf("invalid square root")
+	p := &Point{
+		X: new(big.Int).SetBytes(x.Bytes()[:]),
+		Y: new(big.Int).SetBytes(y.Bytes()[:]),
 	}
-
-	if odd != isOdd(y) {
-		return nil, fmt.Errorf("odd does not match oddness")
-	}
-
-	p := &Point{X: x, Y: y}
 	return p, p.isValid()
-}
-
-// WIP
-func newRand() (*big.Int, error) {
-	pk, err := ecdsa.GenerateKey(s256, rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	return pk.D, nil
 }
 
 // PrivateKey represents the signer's private key
@@ -153,14 +188,20 @@ type PrivateKey big.Int
 // PublicKey represents the signer's public key
 type PublicKey Point
 
+// newRand returns a cryptographically secure random scalar in [1, N-1].
+func newRand() (*big.Int, error) {
+	k, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).SetBytes(k.Serialize()), nil
+}
+
 // NewPrivateKey returns a new random private key
 func NewPrivateKey() (*PrivateKey, error) {
 	k, err := newRand()
 	if err != nil {
 		return nil, err
-	}
-	if err := checkBigIntSize(k); err != nil {
-		return nil, fmt.Errorf("k error: %s", err)
 	}
 	sk := PrivateKey(*k)
 	return &sk, nil
@@ -193,11 +234,17 @@ func NewRequestParameters() (*big.Int, *Point, error) {
 	return k, G.Mul(k), nil
 }
 
-func checkBigIntSize(b *big.Int) error {
-	// check b.Bytes()==32, as go returns big-endian representation of the
-	// bigint, so if length is not 32 we have a smaller value than expected
-	if len(b.Bytes()) != 32 { //nolint:gomnd
-		return fmt.Errorf("invalid length, need 32 bytes")
+// validateScalar checks that v is a canonical non-zero scalar for the group,
+// i.e. in the range [1, N).
+func validateScalar(v *big.Int) error {
+	if v == nil {
+		return fmt.Errorf("nil value")
+	}
+	if v.Sign() <= 0 {
+		return fmt.Errorf("value must be positive and non-zero")
+	}
+	if v.Cmp(N) >= 0 {
+		return fmt.Errorf("value must be inside the finite field (< N)")
 	}
 	return nil
 }
@@ -205,26 +252,26 @@ func checkBigIntSize(b *big.Int) error {
 // BlindSign performs the blind signature on the given mBlinded using the
 // PrivateKey and the secret k values.
 func (sk *PrivateKey) BlindSign(mBlinded *big.Int, k *big.Int) (*big.Int, error) {
-	// TODO add pending checks
-	if mBlinded.Cmp(N) != -1 {
-		return nil, fmt.Errorf("mBlinded not inside the finite field")
-	}
-	if bytes.Equal(mBlinded.Bytes(), big.NewInt(0).Bytes()) {
-		return nil, fmt.Errorf("mBlinded can not be 0")
-	}
-	if err := checkBigIntSize(mBlinded); err != nil {
+	if err := validateScalar(mBlinded); err != nil {
 		return nil, fmt.Errorf("mBlinded error: %s", err)
 	}
-	if err := checkBigIntSize(k); err != nil {
+	if err := validateScalar(k); err != nil {
 		return nil, fmt.Errorf("k error: %s", err)
 	}
+	if sk == nil {
+		return nil, fmt.Errorf("private key error: nil value")
+	}
+	if err := validateScalar(sk.BigInt()); err != nil {
+		return nil, fmt.Errorf("private key error: %s", err)
+	}
 
-	// s' = dm' + k
-	sBlind := new(big.Int).Add(
-		new(big.Int).Mul(sk.BigInt(), mBlinded),
-		k)
-	sBlind = new(big.Int).Mod(sBlind, N)
-	return sBlind, nil
+	// s' = dm' + k, computed with constant-time scalar arithmetic as d and
+	// k are secret
+	d := scalarFromBigInt(sk.BigInt())
+	m := scalarFromBigInt(mBlinded)
+	kS := scalarFromBigInt(k)
+	sBlind := new(secp256k1.ModNScalar).Mul2(d, m).Add(kS)
+	return scalarToBigInt(sBlind), nil
 }
 
 // UserSecretData contains the secret values from the User (a, b) and the
@@ -236,43 +283,63 @@ type UserSecretData struct {
 	F *Point // public (in the paper is named R)
 }
 
+// maxBlindAttempts bounds the resampling loop in Blind. Each retry only
+// happens when the random blinding factors produce a degenerate F (an
+// astronomically unlikely event with honest inputs), so hitting the bound
+// means something is seriously wrong with the inputs or the RNG.
+const maxBlindAttempts = 16
+
 // Blind performs the blinding operation on m using signerR parameter
 func Blind(m *big.Int, signerR *Point) (*big.Int, *UserSecretData, error) {
+	if m == nil {
+		return nil, nil, fmt.Errorf("m can not be nil")
+	}
 	if err := signerR.isValid(); err != nil {
 		return nil, nil, fmt.Errorf("signerR %s", err)
 	}
 
-	var err error
-	u := &UserSecretData{}
-	u.A, err = newRand()
-	if err != nil {
-		return nil, nil, err
-	}
-	u.B, err = newRand()
-	if err != nil {
-		return nil, nil, err
+	h := new(big.Int).SetBytes(keccak256(m.Bytes()))
+	if new(big.Int).Mod(h, N).Sign() == 0 {
+		// h(m) ≡ 0 (mod N) would force mBlinded = 0 for any blinding
+		// factors; no valid signature can be produced for such m
+		return nil, nil, fmt.Errorf("message hash maps to the zero scalar")
 	}
 
-	// (R) F = aR' + bG
-	aR := signerR.Mul(u.A)
-	bG := G.Mul(u.B)
-	u.F = aR.Add(bG)
+	for attempt := 0; attempt < maxBlindAttempts; attempt++ {
+		var err error
+		u := &UserSecretData{}
+		u.A, err = newRand()
+		if err != nil {
+			return nil, nil, err
+		}
+		u.B, err = newRand()
+		if err != nil {
+			return nil, nil, err
+		}
 
-	if err := u.F.isValid(); err != nil {
-		return nil, nil, fmt.Errorf("u.F %s", err)
+		// (R) F = aR' + bG
+		aR := signerR.Mul(u.A)
+		bG := G.Mul(u.B)
+		u.F = aR.Add(bG)
+
+		rx := new(big.Int).Mod(u.F.X, N)
+		if u.F.isValid() != nil || rx.Sign() == 0 {
+			// F degenerate (point at infinity) or rx ≡ 0 (mod N):
+			// resample the blinding factors
+			continue
+		}
+
+		// m' = a^-1 rx h(m), computed with scalar arithmetic as a is
+		// secret (the modular inversion itself is not constant-time;
+		// see the package documentation timing model)
+		a := scalarFromBigInt(u.A)
+		ainv := new(secp256k1.ModNScalar).InverseValNonConst(a)
+		rxS := scalarFromBigInt(rx)
+		hS := scalarFromBigInt(h)
+		mBlinded := ainv.Mul(rxS).Mul(hS)
+		return scalarToBigInt(mBlinded), u, nil
 	}
-
-	rx := new(big.Int).Mod(u.F.X, N)
-
-	// m' = a^-1 rx h(m)
-	ainv := new(big.Int).ModInverse(u.A, N)
-	ainvrx := new(big.Int).Mul(ainv, rx)
-	hBytes := crypto.Keccak256(m.Bytes())
-	h := new(big.Int).SetBytes(hBytes)
-	mBlinded := new(big.Int).Mul(ainvrx, h)
-	mBlinded = new(big.Int).Mod(mBlinded, N)
-
-	return mBlinded, u, nil
+	return nil, nil, fmt.Errorf("blinding failed after %d attempts", maxBlindAttempts)
 }
 
 // Signature contains the signature values S & F
@@ -281,8 +348,8 @@ type Signature struct {
 	F *Point
 }
 
-// Compress packs a Signature to a byte array of 65 bytes, encoded in
-// little-endian.
+// Compress packs a Signature to a byte array of 65 bytes: S as 32
+// little-endian bytes followed by the compressed F point (33 bytes).
 func (s *Signature) Compress() [65]byte {
 	var b [65]byte
 	sBytes := s.S.Bytes()
@@ -295,6 +362,9 @@ func (s *Signature) Compress() [65]byte {
 // DecompressSignature unpacks a Signature from the given byte array of 65 bytes
 func DecompressSignature(b [65]byte) (*Signature, error) {
 	s := new(big.Int).SetBytes(swapEndianness(b[:32]))
+	if err := validateScalar(s); err != nil {
+		return nil, fmt.Errorf("s error: %s", err)
+	}
 	var fBytes [33]byte
 	copy(fBytes[:], b[32:])
 	f, err := DecompressPoint(fBytes)
@@ -306,22 +376,58 @@ func DecompressSignature(b [65]byte) (*Signature, error) {
 }
 
 // Unblind performs the unblinding operation of the blinded signature for the
-// given the UserSecretData
-func Unblind(sBlind *big.Int, u *UserSecretData) *Signature {
-	// s = a s' + b
-	as := new(big.Int).Mul(u.A, sBlind)
-	s := new(big.Int).Add(as, u.B)
-	s = new(big.Int).Mod(s, N)
+// given UserSecretData
+func Unblind(sBlind *big.Int, u *UserSecretData) (*Signature, error) {
+	// sBlind = d·m' + k mod N can legitimately be zero, so unlike other
+	// scalars it is accepted in the range [0, N)
+	if sBlind == nil {
+		return nil, fmt.Errorf("sBlind error: nil value")
+	}
+	if sBlind.Sign() < 0 || sBlind.Cmp(N) >= 0 {
+		return nil, fmt.Errorf("sBlind error: value must be in [0, N)")
+	}
+	if u == nil {
+		return nil, fmt.Errorf("user secret data can not be nil")
+	}
+	if err := validateScalar(u.A); err != nil {
+		return nil, fmt.Errorf("u.A error: %s", err)
+	}
+	if err := validateScalar(u.B); err != nil {
+		return nil, fmt.Errorf("u.B error: %s", err)
+	}
+	if err := u.F.isValid(); err != nil {
+		return nil, fmt.Errorf("u.F %s", err)
+	}
+
+	// s = a s' + b, computed with constant-time scalar arithmetic as a and
+	// b are secret
+	a := scalarFromBigInt(u.A)
+	bS := scalarFromBigInt(u.B)
+	sB := scalarFromBigInt(sBlind)
+	s := new(secp256k1.ModNScalar).Mul2(a, sB).Add(bS)
+
+	if s.IsZero() {
+		// Verify and the parsers reject S = 0, so surface the degenerate
+		// case here instead of returning an unusable signature
+		return nil, fmt.Errorf("degenerate signature (s = 0), run the protocol again")
+	}
 
 	return &Signature{
-		S: s,
+		S: scalarToBigInt(s),
 		F: u.F,
-	}
+	}, nil
 }
 
 // Verify checks the signature of the message m for the given PublicKey
 func Verify(m *big.Int, s *Signature, q *PublicKey) bool {
-	// TODO add pending checks
+	if m == nil || s == nil || q == nil {
+		return false
+	}
+	// reject s.S outside [1, N) to rule out signature malleability via
+	// s.S + kN variants of the same signature
+	if err := validateScalar(s.S); err != nil {
+		return false
+	}
 	if err := s.F.isValid(); err != nil {
 		return false
 	}
@@ -331,12 +437,10 @@ func Verify(m *big.Int, s *Signature, q *PublicKey) bool {
 
 	sG := G.Mul(s.S) // sG
 
-	hBytes := crypto.Keccak256(m.Bytes())
-	h := new(big.Int).SetBytes(hBytes)
+	h := new(big.Int).SetBytes(keccak256(m.Bytes()))
 
 	rx := new(big.Int).Mod(s.F.X, N)
 	rxh := new(big.Int).Mul(rx, h)
-	// do mod, as go-ethereum/crypto/secp256k1 can not handle scalars > 256 bits
 	rxhMod := new(big.Int).Mod(rxh, N)
 	// rxhG := G.Mul(rxh) // originally the paper uses G
 	rxhG := q.Point().Mul(rxhMod)

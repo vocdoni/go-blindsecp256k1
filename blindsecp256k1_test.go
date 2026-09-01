@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +22,7 @@ func TestFlow(t *testing.T) {
 
 	// user: blinds the msg using signer's R
 	// msg := new(big.Int).SetBytes([]byte("test"))
-	msg := new(big.Int).SetBytes(crypto.Keccak256([]byte("test")))
+	msg := new(big.Int).SetBytes(keccak256([]byte("test")))
 	msgBlinded, userSecretData, err := Blind(msg, signerR)
 	require.Nil(t, err)
 
@@ -32,7 +31,8 @@ func TestFlow(t *testing.T) {
 	require.Nil(t, err)
 
 	// user: unblinds the blinded signature
-	sig := Unblind(sBlind, userSecretData)
+	sig, err := Unblind(sBlind, userSecretData)
+	require.Nil(t, err)
 	sigB := sig.Bytes()
 	sig2, err := NewSignatureFromBytes(sigB)
 	assert.Nil(t, err)
@@ -43,16 +43,33 @@ func TestFlow(t *testing.T) {
 	assert.True(t, verified)
 }
 
-func TestSmallBlindedMsg(t *testing.T) {
+func TestBlindSignScalarRange(t *testing.T) {
 	sk, err := NewPrivateKey()
 	require.Nil(t, err)
-	k := big.NewInt(1)
-	smallMsgBlinded := big.NewInt(1)
 
-	// try to BlindSign a small value
-	_, err = sk.BlindSign(smallMsgBlinded, k)
+	// small (but valid) scalars are accepted: any value in [1, N) is a
+	// legitimate blinded message / secret k
+	_, err = sk.BlindSign(big.NewInt(1), big.NewInt(1))
+	require.Nil(t, err)
+
+	// zero is rejected
+	_, err = sk.BlindSign(big.NewInt(0), big.NewInt(1))
 	require.NotNil(t, err)
-	require.Equal(t, "mBlinded error: invalid length, need 32 bytes", err.Error())
+	require.Equal(t, "mBlinded error: value must be positive and non-zero", err.Error())
+	_, err = sk.BlindSign(big.NewInt(1), big.NewInt(0))
+	require.NotNil(t, err)
+	require.Equal(t, "k error: value must be positive and non-zero", err.Error())
+
+	// negative values are rejected
+	_, err = sk.BlindSign(big.NewInt(-1), big.NewInt(1))
+	require.NotNil(t, err)
+
+	// values >= N are rejected
+	_, err = sk.BlindSign(N, big.NewInt(1))
+	require.NotNil(t, err)
+	require.Equal(t, "mBlinded error: value must be inside the finite field (< N)", err.Error())
+	_, err = sk.BlindSign(big.NewInt(1), new(big.Int).Add(N, big.NewInt(1)))
+	require.NotNil(t, err)
 }
 
 func TestHashMOddBytes(t *testing.T) {
@@ -64,13 +81,13 @@ func TestHashMOddBytes(t *testing.T) {
 	require.True(t, ok)
 	mBytes := m.Bytes()
 
-	hBytes := crypto.Keccak256(mBytes[3:])
+	hBytes := keccak256(mBytes[3:])
 	h := new(big.Int).SetBytes(hBytes)
 	assert.Equal(t,
 		"57523339312508913023232057765773019244858443678197951618720342803494056599369",
 		h.String())
 
-	hBytes = crypto.Keccak256(append(mBytes, []byte{0x12, 0x34}...))
+	hBytes = keccak256(append(mBytes, []byte{0x12, 0x34}...))
 	h = new(big.Int).SetBytes(hBytes)
 	assert.Equal(t,
 		"9697834584560956691445940439424778243200861871421750951058436814122640359156",

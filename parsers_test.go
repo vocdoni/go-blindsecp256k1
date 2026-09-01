@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/crypto"
+	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,13 +110,13 @@ func TestBytes(t *testing.T) {
 
 func TestImportECDSApubKey(t *testing.T) {
 	// Generate an ECDSA key
-	k, err := crypto.GenerateKey()
+	k, err := secp256k1.GeneratePrivateKey()
 	assert.Nil(t, err)
-	// Import the ECDSA Public key bytes into a PublicKey type
-	pk, err := NewPublicKeyFromECDSA(crypto.FromECDSAPub(&k.PublicKey))
+	// Import the SEC1-serialized ECDSA public key bytes into a PublicKey type
+	pk, err := NewPublicKeyFromECDSA(k.PubKey().SerializeUncompressed())
 	assert.Nil(t, err)
-	// Set the ECDSA Private key point as a blindsecp256k1 PrivateKey type
-	bk := PrivateKey(*k.D)
+	// Set the ECDSA private key scalar as a blindsecp256k1 PrivateKey type
+	bk := PrivateKey(*new(big.Int).SetBytes(k.Serialize()))
 	// Compare both public keys
 	assert.Equal(t, bk.Public().Bytes(), pk.Bytes())
 }

@@ -11,20 +11,10 @@ import (
 
 func TestBytesUncompressed(t *testing.T) {
 	// Point
-	p := &Point{
-		X: big.NewInt(3),
-		Y: big.NewInt(3),
-	}
+	p := G.Mul(big.NewInt(1234))
 	b := p.BytesUncompressed()
-	assert.Equal(t, "03000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000", hex.EncodeToString(b)) //nolint:lll
-	p2, err := NewPointFromBytesUncompressed(b)
-	assert.Nil(t, err)
-	assert.Equal(t, p, p2)
-
-	p = G.Mul(big.NewInt(1234))
-	b = p.BytesUncompressed()
 	assert.Equal(t, "f258163f65f65865a79a4279e2ebabb5a57b85501dd4b381d1dc605c434876e34c308bd3f18f062d5cc07f34948ced82f9a76f9c3e65ae64f158412da8e92e6d", hex.EncodeToString(b)) //nolint:lll
-	p2, err = NewPointFromBytesUncompressed(b)
+	p2, err := NewPointFromBytesUncompressed(b)
 	assert.Nil(t, err)
 	assert.Equal(t, p, p2)
 
