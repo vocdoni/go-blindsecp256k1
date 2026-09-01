@@ -205,9 +205,6 @@ func NewPrivateKey() (*PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkBigIntSize(k); err != nil {
-		return nil, fmt.Errorf("k error: %s", err)
-	}
 	sk := PrivateKey(*k)
 	return &sk, nil
 }
@@ -239,11 +236,17 @@ func NewRequestParameters() (*big.Int, *Point, error) {
 	return k, G.Mul(k), nil
 }
 
-func checkBigIntSize(b *big.Int) error {
-	// check b.Bytes()==32, as go returns big-endian representation of the
-	// bigint, so if length is not 32 we have a smaller value than expected
-	if len(b.Bytes()) != 32 {
-		return fmt.Errorf("invalid length, need 32 bytes")
+// validateScalar checks that v is a canonical non-zero scalar for the group,
+// i.e. in the range [1, N).
+func validateScalar(v *big.Int) error {
+	if v == nil {
+		return fmt.Errorf("nil value")
+	}
+	if v.Sign() <= 0 {
+		return fmt.Errorf("value must be positive and non-zero")
+	}
+	if v.Cmp(N) >= 0 {
+		return fmt.Errorf("value must be inside the finite field (< N)")
 	}
 	return nil
 }
@@ -251,17 +254,17 @@ func checkBigIntSize(b *big.Int) error {
 // BlindSign performs the blind signature on the given mBlinded using the
 // PrivateKey and the secret k values.
 func (sk *PrivateKey) BlindSign(mBlinded *big.Int, k *big.Int) (*big.Int, error) {
-	if mBlinded.Cmp(N) != -1 {
-		return nil, fmt.Errorf("mBlinded not inside the finite field")
-	}
-	if bytes.Equal(mBlinded.Bytes(), big.NewInt(0).Bytes()) {
-		return nil, fmt.Errorf("mBlinded can not be 0")
-	}
-	if err := checkBigIntSize(mBlinded); err != nil {
+	if err := validateScalar(mBlinded); err != nil {
 		return nil, fmt.Errorf("mBlinded error: %s", err)
 	}
-	if err := checkBigIntSize(k); err != nil {
+	if err := validateScalar(k); err != nil {
 		return nil, fmt.Errorf("k error: %s", err)
+	}
+	if sk == nil {
+		return nil, fmt.Errorf("private key error: nil value")
+	}
+	if err := validateScalar(sk.BigInt()); err != nil {
+		return nil, fmt.Errorf("private key error: %s", err)
 	}
 
 	// s' = dm' + k, computed with constant-time scalar arithmetic as d and
@@ -282,43 +285,63 @@ type UserSecretData struct {
 	F *Point // public (in the paper is named R)
 }
 
+// maxBlindAttempts bounds the resampling loop in Blind. Each retry only
+// happens when the random blinding factors produce a degenerate F (an
+// astronomically unlikely event with honest inputs), so hitting the bound
+// means something is seriously wrong with the inputs or the RNG.
+const maxBlindAttempts = 16
+
 // Blind performs the blinding operation on m using signerR parameter
 func Blind(m *big.Int, signerR *Point) (*big.Int, *UserSecretData, error) {
+	if m == nil {
+		return nil, nil, fmt.Errorf("m can not be nil")
+	}
 	if err := signerR.isValid(); err != nil {
 		return nil, nil, fmt.Errorf("signerR %s", err)
 	}
 
-	var err error
-	u := &UserSecretData{}
-	u.A, err = newRand()
-	if err != nil {
-		return nil, nil, err
-	}
-	u.B, err = newRand()
-	if err != nil {
-		return nil, nil, err
+	h := new(big.Int).SetBytes(keccak256(m.Bytes()))
+	if new(big.Int).Mod(h, N).Sign() == 0 {
+		// h(m) ≡ 0 (mod N) would force mBlinded = 0 for any blinding
+		// factors; no valid signature can be produced for such m
+		return nil, nil, fmt.Errorf("message hash maps to the zero scalar")
 	}
 
-	// (R) F = aR' + bG
-	aR := signerR.Mul(u.A)
-	bG := G.Mul(u.B)
-	u.F = aR.Add(bG)
+	for attempt := 0; attempt < maxBlindAttempts; attempt++ {
+		var err error
+		u := &UserSecretData{}
+		u.A, err = newRand()
+		if err != nil {
+			return nil, nil, err
+		}
+		u.B, err = newRand()
+		if err != nil {
+			return nil, nil, err
+		}
 
-	if err := u.F.isValid(); err != nil {
-		return nil, nil, fmt.Errorf("u.F %s", err)
+		// (R) F = aR' + bG
+		aR := signerR.Mul(u.A)
+		bG := G.Mul(u.B)
+		u.F = aR.Add(bG)
+
+		rx := new(big.Int).Mod(u.F.X, N)
+		if u.F.isValid() != nil || rx.Sign() == 0 {
+			// F degenerate (point at infinity) or rx ≡ 0 (mod N):
+			// resample the blinding factors
+			continue
+		}
+
+		// m' = a^-1 rx h(m), computed with scalar arithmetic as a is
+		// secret (the modular inversion itself is not constant-time;
+		// see the package documentation timing model)
+		a := scalarFromBigInt(u.A)
+		ainv := new(secp256k1.ModNScalar).InverseValNonConst(a)
+		rxS := scalarFromBigInt(rx)
+		hS := scalarFromBigInt(h)
+		mBlinded := ainv.Mul(rxS).Mul(hS)
+		return scalarToBigInt(mBlinded), u, nil
 	}
-
-	rx := new(big.Int).Mod(u.F.X, N)
-
-	// m' = a^-1 rx h(m), computed with scalar arithmetic as a is secret
-	// (the modular inversion itself is not constant-time; see the package
-	// documentation timing model)
-	a := scalarFromBigInt(u.A)
-	ainv := new(secp256k1.ModNScalar).InverseValNonConst(a)
-	rxS := scalarFromBigInt(rx)
-	h := scalarFromBigInt(new(big.Int).SetBytes(keccak256(m.Bytes())))
-	mBlinded := ainv.Mul(rxS).Mul(h)
-	return scalarToBigInt(mBlinded), u, nil
+	return nil, nil, fmt.Errorf("blinding failed after %d attempts", maxBlindAttempts)
 }
 
 // Signature contains the signature values S & F
@@ -341,6 +364,9 @@ func (s *Signature) Compress() [65]byte {
 // DecompressSignature unpacks a Signature from the given byte array of 65 bytes
 func DecompressSignature(b [65]byte) (*Signature, error) {
 	s := new(big.Int).SetBytes(swapEndianness(b[:32]))
+	if err := validateScalar(s); err != nil {
+		return nil, fmt.Errorf("s error: %s", err)
+	}
 	var fBytes [33]byte
 	copy(fBytes[:], b[32:])
 	f, err := DecompressPoint(fBytes)
@@ -352,8 +378,24 @@ func DecompressSignature(b [65]byte) (*Signature, error) {
 }
 
 // Unblind performs the unblinding operation of the blinded signature for the
-// given the UserSecretData
-func Unblind(sBlind *big.Int, u *UserSecretData) *Signature {
+// given UserSecretData
+func Unblind(sBlind *big.Int, u *UserSecretData) (*Signature, error) {
+	if err := validateScalar(sBlind); err != nil {
+		return nil, fmt.Errorf("sBlind error: %s", err)
+	}
+	if u == nil {
+		return nil, fmt.Errorf("user secret data can not be nil")
+	}
+	if err := validateScalar(u.A); err != nil {
+		return nil, fmt.Errorf("u.A error: %s", err)
+	}
+	if err := validateScalar(u.B); err != nil {
+		return nil, fmt.Errorf("u.B error: %s", err)
+	}
+	if err := u.F.isValid(); err != nil {
+		return nil, fmt.Errorf("u.F %s", err)
+	}
+
 	// s = a s' + b, computed with constant-time scalar arithmetic as a and
 	// b are secret
 	a := scalarFromBigInt(u.A)
@@ -364,11 +406,19 @@ func Unblind(sBlind *big.Int, u *UserSecretData) *Signature {
 	return &Signature{
 		S: scalarToBigInt(s),
 		F: u.F,
-	}
+	}, nil
 }
 
 // Verify checks the signature of the message m for the given PublicKey
 func Verify(m *big.Int, s *Signature, q *PublicKey) bool {
+	if m == nil || s == nil || q == nil {
+		return false
+	}
+	// reject s.S outside [1, N) to rule out signature malleability via
+	// s.S + kN variants of the same signature
+	if err := validateScalar(s.S); err != nil {
+		return false
+	}
 	if err := s.F.isValid(); err != nil {
 		return false
 	}

@@ -31,7 +31,8 @@ func TestFlow(t *testing.T) {
 	require.Nil(t, err)
 
 	// user: unblinds the blinded signature
-	sig := Unblind(sBlind, userSecretData)
+	sig, err := Unblind(sBlind, userSecretData)
+	require.Nil(t, err)
 	sigB := sig.Bytes()
 	sig2, err := NewSignatureFromBytes(sigB)
 	assert.Nil(t, err)
@@ -42,16 +43,33 @@ func TestFlow(t *testing.T) {
 	assert.True(t, verified)
 }
 
-func TestSmallBlindedMsg(t *testing.T) {
+func TestBlindSignScalarRange(t *testing.T) {
 	sk, err := NewPrivateKey()
 	require.Nil(t, err)
-	k := big.NewInt(1)
-	smallMsgBlinded := big.NewInt(1)
 
-	// try to BlindSign a small value
-	_, err = sk.BlindSign(smallMsgBlinded, k)
+	// small (but valid) scalars are accepted: any value in [1, N) is a
+	// legitimate blinded message / secret k
+	_, err = sk.BlindSign(big.NewInt(1), big.NewInt(1))
+	require.Nil(t, err)
+
+	// zero is rejected
+	_, err = sk.BlindSign(big.NewInt(0), big.NewInt(1))
 	require.NotNil(t, err)
-	require.Equal(t, "mBlinded error: invalid length, need 32 bytes", err.Error())
+	require.Equal(t, "mBlinded error: value must be positive and non-zero", err.Error())
+	_, err = sk.BlindSign(big.NewInt(1), big.NewInt(0))
+	require.NotNil(t, err)
+	require.Equal(t, "k error: value must be positive and non-zero", err.Error())
+
+	// negative values are rejected
+	_, err = sk.BlindSign(big.NewInt(-1), big.NewInt(1))
+	require.NotNil(t, err)
+
+	// values >= N are rejected
+	_, err = sk.BlindSign(N, big.NewInt(1))
+	require.NotNil(t, err)
+	require.Equal(t, "mBlinded error: value must be inside the finite field (< N)", err.Error())
+	_, err = sk.BlindSign(big.NewInt(1), new(big.Int).Add(N, big.NewInt(1)))
+	require.NotNil(t, err)
 }
 
 func TestHashMOddBytes(t *testing.T) {

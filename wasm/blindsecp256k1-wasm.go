@@ -88,7 +88,10 @@ func unblind(this js.Value, values []js.Value) interface{} {
 		F: uF,
 	}
 
-	sig := blindsecp256k1.Unblind(sBlind, u)
+	sig, err := blindsecp256k1.Unblind(sBlind, u)
+	if err != nil {
+		panic(err)
+	}
 
 	r := make(map[string]interface{})
 	r["s"] = sig.S.String()

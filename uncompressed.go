@@ -17,7 +17,8 @@ func (p *Point) BytesUncompressed() []byte {
 
 // NewPointFromBytesUncompressed returns a new *Point from a given byte array
 // with length 64 which has encoded the point coordinates each one as 32 bytes
-// in little-endian.
+// in little-endian. The decoded point is validated to be on the secp256k1
+// curve.
 func NewPointFromBytesUncompressed(b []byte) (*Point, error) {
 	if len(b) != 64 {
 		return nil, fmt.Errorf("can not parse bytes to Point,"+
@@ -27,7 +28,7 @@ func NewPointFromBytesUncompressed(b []byte) (*Point, error) {
 	p := &Point{}
 	p.X = new(big.Int).SetBytes(swapEndianness(b[:32]))
 	p.Y = new(big.Int).SetBytes(swapEndianness(b[32:]))
-	return p, nil
+	return p, p.isValid()
 }
 
 // BytesUncompressed returns a byte array of length 64, with the X & Y
@@ -61,7 +62,8 @@ func (sig *Signature) BytesUncompressed() []byte {
 
 // NewSignatureFromBytesUncompressed returns a new *Signature from a given byte array with
 // length 96 which has encoded S and the F point coordinates each one as 32
-// bytes in little-endian.
+// bytes in little-endian. The decoded S is validated to be in [1, N) and the
+// decoded F to be on the secp256k1 curve.
 func NewSignatureFromBytesUncompressed(b []byte) (*Signature, error) {
 	if len(b) != 96 {
 		return nil,
@@ -70,6 +72,9 @@ func NewSignatureFromBytesUncompressed(b []byte) (*Signature, error) {
 				96, len(b))
 	}
 	s := new(big.Int).SetBytes(swapEndianness(b[:32]))
+	if err := validateScalar(s); err != nil {
+		return nil, fmt.Errorf("s error: %s", err)
+	}
 	f, err := NewPointFromBytesUncompressed(b[32:96])
 	if err != nil {
 		return nil, err

@@ -19,6 +19,9 @@ func swapEndianness(b []byte) []byte {
 
 // MarshalJSON implements the json marshaler for the Point
 func (p Point) MarshalJSON() ([]byte, error) {
+	if p.X == nil || p.Y == nil {
+		return nil, fmt.Errorf("can not marshal Point with nil coordinates")
+	}
 	return json.Marshal(&struct {
 		X string `json:"x"`
 		Y string `json:"y"`
@@ -28,7 +31,8 @@ func (p Point) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON implements the json unmarshaler for the Point
+// UnmarshalJSON implements the json unmarshaler for the Point. The decoded
+// point is validated to be on the secp256k1 curve.
 func (p *Point) UnmarshalJSON(b []byte) error {
 	aux := &struct {
 		X string `json:"x"`
@@ -46,20 +50,24 @@ func (p *Point) UnmarshalJSON(b []byte) error {
 	if !ok {
 		return fmt.Errorf("can not parse Point.Y %s", aux.Y)
 	}
+	aux2 := &Point{X: x, Y: y}
+	if err := aux2.isValid(); err != nil {
+		return err
+	}
 	p.X = x
 	p.Y = y
 	return nil
 }
 
-// Bytes returns the compressed Point in a little-endian byte array
+// Bytes returns the compressed Point as a byte slice of length 33 (see
+// Compress for the exact encoding).
 func (p *Point) Bytes() []byte {
 	b := p.Compress()
 	return b[:]
 }
 
-// NewPointFromBytes returns a new *Point from a given byte array with length
-// 64 which has encoded the point coordinates each one as 32 bytes in
-// little-endian.
+// NewPointFromBytes returns a new *Point from the given compressed Point
+// encoding of length 33 (see Compress for the exact encoding).
 func NewPointFromBytes(b []byte) (*Point, error) {
 	if len(b) != 33 {
 		return nil, fmt.Errorf("can not parse bytes to Point,"+
@@ -89,14 +97,14 @@ func (pk *PublicKey) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Bytes returns the compressed PublicKey in a little-endian byte array
+// Bytes returns the compressed PublicKey as a byte slice of length 33 (see
+// Point.Compress for the exact encoding).
 func (pk *PublicKey) Bytes() []byte {
 	return pk.Point().Bytes()
 }
 
-// NewPublicKeyFromBytes returns a new *PublicKey from a given byte array with
-// length 64 which has encoded the public key coordinates each one as 32 bytes
-// in little-endian.
+// NewPublicKeyFromBytes returns a new *PublicKey from the given compressed
+// encoding of length 33 (see Point.Compress for the exact encoding).
 func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	p, err := NewPointFromBytes(b)
 	if err != nil {
@@ -121,6 +129,9 @@ func NewPublicKeyFromECDSA(b []byte) (*PublicKey, error) {
 
 // MarshalJSON implements the json marshaler for the Signature
 func (sig Signature) MarshalJSON() ([]byte, error) {
+	if sig.S == nil || sig.F == nil || sig.F.X == nil || sig.F.Y == nil {
+		return nil, fmt.Errorf("can not marshal Signature with nil values")
+	}
 	return json.Marshal(&struct {
 		S string `json:"s"`
 		F struct {
@@ -139,7 +150,9 @@ func (sig Signature) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON implements the json unmarshaler for the Signature
+// UnmarshalJSON implements the json unmarshaler for the Signature. The
+// decoded S is validated to be in [1, N) and the decoded F to be on the
+// secp256k1 curve.
 func (sig *Signature) UnmarshalJSON(b []byte) error {
 	aux := &struct {
 		S string `json:"s"`
@@ -157,7 +170,9 @@ func (sig *Signature) UnmarshalJSON(b []byte) error {
 	if !ok {
 		return fmt.Errorf("can not parse sig.S %s", aux.S)
 	}
-	sig.S = s
+	if err := validateScalar(s); err != nil {
+		return fmt.Errorf("sig.S error: %s", err)
+	}
 
 	x, ok := new(big.Int).SetString(aux.F.X, 10)
 	if !ok {
@@ -167,21 +182,24 @@ func (sig *Signature) UnmarshalJSON(b []byte) error {
 	if !ok {
 		return fmt.Errorf("can not parse sig.F.Y %s", aux.F.Y)
 	}
-	sig.F = &Point{}
-	sig.F.X = x
-	sig.F.Y = y
+	f := &Point{X: x, Y: y}
+	if err := f.isValid(); err != nil {
+		return fmt.Errorf("sig.F %s", err)
+	}
+	sig.S = s
+	sig.F = f
 	return nil
 }
 
-// Bytes returns the compressed Signature in a little-endian byte array
+// Bytes returns the compressed Signature as a byte slice of length 65 (see
+// Compress for the exact encoding).
 func (sig *Signature) Bytes() []byte {
 	s := sig.Compress()
 	return s[:]
 }
 
-// NewSignatureFromBytes returns a new *Signature from a given byte array with
-// length 96 which has encoded S and the F point coordinates each one as 32
-// bytes in little-endian.
+// NewSignatureFromBytes returns a new *Signature from the given compressed
+// Signature encoding of length 65 (see Compress for the exact encoding).
 func NewSignatureFromBytes(b []byte) (*Signature, error) {
 	if len(b) != 65 {
 		return nil,
